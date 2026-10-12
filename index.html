@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#e41536">
+<title>PIRI FLAME Receipts</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Outfit:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --bg: #15110f; --surface: #221d1c; --surface2: #2d2626; --fg: #f6f1ef; --muted: #a9a09f; --line: #3a3233;
+  --accent: #e41536; --accent-fg: #fff; --ok: #4fc27f; --warn-bg: #4a3d05; --warn-fg: #ffe68a; --warn-line: #d9b22a;
+  --font-display: 'Anton', 'Impact', 'Arial Narrow', sans-serif; --font-body: 'Outfit', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.4; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+#app { height: 100%; display: flex; flex-direction: column; }
+.screen { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 24px; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--surface); border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); }
+.tabs button { background: none; border: 0; border-radius: 10px; padding: 8px 4px; color: var(--muted); font-weight: 600; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tabs button[aria-selected="true"] { color: var(--fg); background: var(--surface2); }
+.tabs .badge { background: var(--accent); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; min-width: 18px; text-align: center; }
+h1, h2 { font-family: var(--font-display); font-weight: 400; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 10px; }
+h1 { font-size: 24px; } h2 { font-size: 19px; }
+.subtle { color: var(--muted); font-size: 14px; }
+.btn { border: 1px solid var(--line); background: var(--surface2); border-radius: 10px; padding: 12px 14px; font-weight: 600; font-size: 16px; min-height: 48px; color: var(--fg); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-family: var(--font-display); font-weight: 400; font-size: 19px; letter-spacing: .05em; text-transform: uppercase; }
+.btn.small { padding: 8px 12px; min-height: 40px; font-size: 14px; }
+.btn.danger { color: #ff8a9a; border-color: #ff8a9a; background: transparent; }
+.btn[disabled] { opacity: .5; cursor: default; }
+.notice { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 15px; }
+.notice.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; z-index: 50; font-weight: 600; font-size: 15px; max-width: calc(100% - 32px); }
+
+/* Camera */
+#camScreen { padding: 0; position: relative; background: #000; display: flex; flex-direction: column; }
+.viewfinder { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #000; }
+.viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.guide { position: absolute; inset: 10% 8%; border: 2px solid rgba(255,255,255,.55); border-radius: 12px; pointer-events: none; transition: border-color .2s; }
+.guide.steady { border-color: var(--warn-line); }
+.guide.ready { border-color: var(--ok); }
+.flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.flash.on { animation: flash .25s ease-out; }
+@keyframes flash { from { opacity: .9 } to { opacity: 0 } }
+.hud { position: absolute; left: 0; right: 0; top: calc(10px + env(safe-area-inset-top, 0px)); display: flex; justify-content: space-between; align-items: flex-start; padding: 0 12px; gap: 8px; pointer-events: none; }
+.chip { background: rgba(0,0,0,.6); color: #fff; border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 600; backdrop-filter: blur(6px); pointer-events: auto; }
+.chip.state { max-width: 60%; }
+.camctrl { background: #000; padding: 10px 16px 12px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+.shutter { width: 72px; height: 72px; border-radius: 50%; border: 4px solid #fff; background: var(--accent); justify-self: center; }
+.shutter:active { transform: scale(.94); }
+.camctrl .left, .camctrl .right { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #ddd; }
+.camctrl .right { align-items: flex-end; text-align: right; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,.12); border: 0; color: #fff; border-radius: 999px; padding: 8px 12px; font-size: 14px; font-weight: 600; }
+.toggle .dot { width: 10px; height: 10px; border-radius: 50%; background: #888; }
+.toggle[aria-pressed="true"] .dot { background: var(--ok); }
+.strip { position: absolute; left: 0; right: 0; bottom: 8px; display: flex; gap: 6px; padding: 0 10px; overflow-x: auto; pointer-events: none; }
+.strip img { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; border: 2px solid rgba(255,255,255,.7); flex: 0 0 46px; }
+.camoff { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: #000; }
+.camoff p { margin: 0; color: #ccc; max-width: 320px; }
+
+/* Cards & list */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.card.flagged { border-color: var(--warn-line); box-shadow: inset 4px 0 0 var(--warn-line); }
+.card-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+.thumb { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: var(--line); flex: 0 0 72px; border: 0; padding: 0; background-size: cover; background-position: center; }
+.card-head .meta { min-width: 0; flex: 1; }
+.card-head .meta .title { font-weight: 600; }
+.flagnote { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 8px 10px; font-size: 14px; margin-bottom: 10px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.field input, .field select { border: 1px solid var(--line); background: var(--surface2); border-radius: 8px; padding: 10px; min-height: 44px; width: 100%; font-size: 16px; }
+.field.unclear input, .field.unclear select { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn-fg); }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { flex: 1; border: 0; background: var(--surface2); padding: 10px 4px; min-height: 44px; font-weight: 500; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.actions { display: flex; gap: 10px; margin-top: 12px; }
+.actions .btn { flex: 1; }
+.dupe { color: #ff8a9a; font-size: 14px; margin-top: 8px; font-weight: 600; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; width: 100%; text-align: left; color: var(--fg); }
+.row.flagged { border-color: var(--warn-line); box-shadow: inset 4px 0 0 var(--warn-line); }
+.row .r1 { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .amt { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+.row .r2 { color: var(--muted); font-size: 13px; grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 12px; border: 1px solid var(--line); }
+.pill.cash { border-color: var(--ok); color: var(--ok); }
+.pill.flag { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
+.daygroup { font-size: 13px; color: var(--muted); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.statbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+.stat strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.progress { display: flex; align-items: center; gap: 12px; }
+.spinner { width: 20px; height: 20px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; flex: 0 0 20px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } .flash.on { animation: none; } }
+.overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.92); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.overlay img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.overlay button { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; }
+.empty { text-align: center; padding: 32px 12px; color: var(--muted); }
+.empty .big { font-family: var(--font-display); font-size: 22px; color: var(--fg); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; }
+.hiddenfile { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.setting { margin-bottom: 18px; }
+.setting label.top { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.setting input[type=text], .setting input[type=password], .setting select { width: 100%; border: 1px solid var(--line); background: var(--surface2); border-radius: 8px; padding: 10px; min-height: 44px; font-size: 16px; }
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline input { flex: 1; min-width: 0; }
+.check { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.check input { width: 22px; height: 22px; }
+.export-opts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- CAMERA -->
+  <section class="screen" id="camScreen">
+    <div class="viewfinder">
+      <video id="video" playsinline autoplay muted></video>
+      <div class="guide" id="guide"></div>
+      <div class="flash" id="flash"></div>
+      <div class="hud">
+        <div class="chip state" id="camState">Starting camera…</div>
+        <div class="chip" id="camCount">0 shot</div>
+      </div>
+      <div class="strip" id="strip"></div>
+      <div class="camoff" id="camOff" hidden>
+        <h1>PIRI FLAME Receipts</h1>
+        <p id="camOffMsg">Tap Start to open the camera. It takes the photo by itself when the receipt is sharp and steady.</p>
+        <button class="btn primary" id="btnStart" type="button">Start camera</button>
+        <button class="btn" id="btnImport" type="button">Import photos or PDF</button>
+      </div>
+    </div>
+    <div class="camctrl">
+      <div class="left">
+        <button class="toggle" id="autoToggle" type="button" aria-pressed="true"><span class="dot"></span>Auto</button>
+        <span id="readState" class="subtle">Ready</span>
+      </div>
+      <button class="shutter" id="shutter" type="button" aria-label="Take photo"></button>
+      <div class="right">
+        <button class="toggle" id="btnStop" type="button">Stop</button>
+        <span id="savedState" class="subtle"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECEIPTS -->
+  <section class="screen" id="listScreen" hidden>
+    <h1>Receipts</h1>
+    <div class="statbar" id="statbar"></div>
+    <div id="status" hidden></div>
+    <div id="reviewSection" hidden>
+      <h2>Check and save</h2>
+      <p class="subtle">Fix anything wrong, then Save. Yellow fields were hard to read.</p>
+      <div id="reviewList"></div>
+    </div>
+    <div id="exportSection" hidden><div class="notice" id="exportBox"></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px">
+      <h2 style="margin:0">Saved</h2>
+      <button class="btn small" id="btnExport" type="button">Export CSV</button>
+    </div>
+    <div id="rows"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="screen" id="setScreen" hidden>
+    <h1>Settings</h1>
+    <div class="setting">
+      <label class="top" for="apiKey">Anthropic API key</label>
+      <div class="inline"><input type="password" id="apiKey" autocomplete="off" placeholder="sk-ant-…"><button class="btn small" id="btnShowKey" type="button">Show</button></div>
+      <div class="subtle" style="margin-top:6px">Stays on this phone. Create one at console.anthropic.com, then paste it here.</div>
+      <div class="inline" style="margin-top:8px"><button class="btn small" id="btnTestKey" type="button">Test key</button><span id="keyResult" class="subtle"></span></div>
+    </div>
+    <div class="setting">
+      <label class="top" for="model">Reading model</label>
+      <select id="model">
+        <option value="claude-opus-5-5">Claude Opus 5.5 (most accurate)</option>
+        <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (cheaper, fast)</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label class="check"><input type="checkbox" id="autosave"> Save clear receipts automatically</label>
+      <div class="subtle" style="margin-top:4px">Only receipts read with full confidence. Everything else waits for your check.</div>
+    </div>
+    <div class="setting">
+      <label class="top" for="sens">Auto-capture sensitivity</label>
+      <select id="sens">
+        <option value="careful">Careful (waits longer, sharper shots)</option>
+        <option value="normal" selected>Normal</option>
+        <option value="fast">Fast (shoots sooner)</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label class="check"><input type="checkbox" id="multi"> Imported photos may hold several receipts (A4 pages)</label>
+      <div class="subtle" style="margin-top:4px">Finds each receipt on the page and reads it separately. Camera shots are read as one receipt.</div>
+    </div>
+    <div class="setting">
+      <label class="top">Storage</label>
+      <div class="subtle" id="storageInfo">…</div>
+      <button class="btn small danger" id="btnClearExported" type="button" style="margin-top:8px">Delete exported receipts and their photos</button>
+    </div>
+  </section>
+
+  <nav class="tabs">
+    <button type="button" data-tab="cam" aria-selected="true">Camera</button>
+    <button type="button" data-tab="list" aria-selected="false"><span>Receipts</span><span class="badge" id="badge" hidden>0</span></button>
+    <button type="button" data-tab="set" aria-selected="false">Settings</button>
+  </nav>
+</div>
+
+<input type="file" id="fileImport" class="hiddenfile" accept="image/*,application/pdf" multiple>
+<div id="overlay" class="overlay" hidden><img id="overlayImg" alt="Receipt photo"><button class="btn" id="overlayClose" type="button">Close</button></div>
+<canvas id="work" hidden></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+'use strict';
+// ====================== Sheet lists (exact values; some carry a trailing space in the sheet) ======================
+const CATEGORIES = ["Shopping","Wages","Packaging","Rent","Marketing","Electricity","Accountant","Service Charge","Water","Insurance","Bin Collection","Internet","Spotify","Business Rates","Social Media","Epos","Fuel","Uber","Software","Professional/Government","Hotel","Building/Tools","Uniform/Plates","Delivery/Van Drop Off","Sudeisi Personal","Abdo Personal","Towfiq Personal","Group Personal","Bank Withdrawel","Family Personal","Photography ","Car","Commission","Tax","Gas","Machinery ","Maintenance","Mum Personal","Piri Flame","Lekker Nottingham","Unknown Wages"];
+const ACCOUNTS = ["CASH","BANK ","EPOS BANK"];
+const IDS = ["Cash","Card","Cheque"];
+const KNOWN_STORES = ["Seoudi","Othaim Markets","Carrefour","Panda","Rich Bake","Damfi - Breadway","Al-Safwa","Al-Baroon","Abu Yusuf for Food Supplies","Pyramid Poultry Company","Foodica Plus - V-Drinks","Mafaza - Al Sabeel","Fresh Farm Food","Mass Distribution","International Food & Consumable Goods","Basmati Rice - Heart Yemen","Awlad Haj Ragab - Steak","Valley Waters","Koki","MDT","Ben Soliman","Al-Rayah","Khair El Zaman - Chicken","Pita Bread","Vegetables","Stationery","Cleaning Products","Fuel","Gas Bill"];
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg, ms = 2400) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.append(t); setTimeout(() => t.remove(), ms); }
+function pref(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
+function setPref(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+function accountFor(id) { return id === 'Cash' ? 'CASH' : 'BANK '; }
+function fmtAmt(n) { return (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function isoToSheet(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : (iso || ''); }
+function isoToNice(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); if (!m) return 'No date'; return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); }
+function todayIso() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function csvCell(v) { const s = String(v ?? ''); return /[",\n\r]/.test(s) || /^\s|\s$/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+// ====================== IndexedDB ======================
+let idb = null;
+function openDb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('piri-receipts', 1);
+    r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains('rows')) d.createObjectStore('rows', { keyPath: 'id' }); if (!d.objectStoreNames.contains('photos')) d.createObjectStore('photos', { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+function tx(store, mode, fn) {
+  return new Promise((res, rej) => { const t = idb.transaction(store, mode); const s = t.objectStore(store); const out = fn(s); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+}
+const store = {
+  all: () => tx('rows', 'readonly', s => s.getAll()),
+  put: (row) => tx('rows', 'readwrite', s => s.put(row)),
+  del: (id) => tx('rows', 'readwrite', s => s.delete(id)),
+  putPhoto: (id, blob) => tx('photos', 'readwrite', s => s.put({ id, blob })),
+  getPhoto: (id) => tx('photos', 'readonly', s => s.get(id)),
+  delPhoto: (id) => tx('photos', 'readwrite', s => s.delete(id)),
+};
+let rows = [];
+async function loadRows() { rows = (await store.all()).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || '')); }
+
+// ====================== Image helpers ======================
+async function loadCanvas(src, max = 2400) {
+  const url = URL.createObjectURL(src);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode')); i.src = url; });
+    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * scale)); c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c;
+  } finally { URL.revokeObjectURL(url); }
+}
+function toBlob(canvas, max = 1800, q = 0.9) {
+  const scale = Math.min(1, max / Math.max(canvas.width, canvas.height)); let c = canvas;
+  if (scale < 1) { c = document.createElement('canvas'); c.width = Math.round(canvas.width * scale); c.height = Math.round(canvas.height * scale); c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height); }
+  return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('encode')), 'image/jpeg', q));
+}
+function cropCanvas(src, box) {
+  const pad = 0.03;
+  const x0 = Math.max(0, (box.x - pad) * src.width), y0 = Math.max(0, (box.y - pad) * src.height);
+  const x1 = Math.min(src.width, (box.x + box.w + pad) * src.width), y1 = Math.min(src.height, (box.y + box.h + pad) * src.height);
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(x1 - x0)); c.height = Math.max(1, Math.round(y1 - y0));
+  c.getContext('2d').drawImage(src, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height); return c;
+}
+function blobToBase64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(blob); }); }
+
+// ====================== Claude API ======================
+const API = 'https://api.anthropic.com/v1/messages';
+function apiKey() { return pref('apiKey', '').trim(); }
+function model() { return pref('model', 'claude-opus-5-5'); }
+function parseJsonLoose(text) {
+  try { return JSON.parse(text); } catch (e) { /* continue */ }
+  const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(text); if (fence) { try { return JSON.parse(fence[1]); } catch (e) { /* continue */ } }
+  const a = text.indexOf('['), b = text.lastIndexOf(']'); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch (e) { /* continue */ } }
+  const c = text.indexOf('{'), d = text.lastIndexOf('}'); if (c >= 0 && d > c) { try { return JSON.parse(text.slice(c, d + 1)); } catch (e) { /* continue */ } }
+  throw { code: 'invalid_json', message: 'No JSON in reply' };
+}
+async function askClaude(prompt, blob, opts = {}) {
+  const key = apiKey(); if (!key) throw { code: 'no_key', message: 'No API key' };
+  const data = await blobToBase64(blob);
+  const body = { model: opts.model || model(), max_tokens: 8000, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }, { type: 'text', text: prompt }] }] };
+  if (opts.effort) body.output_config = { effort: opts.effort };
+  const headers = { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+  // Server-side refusal fallback (opt-in beta). If the server rejects the field, retry once without it.
+  let res;
+  try { res = await fetch(API, { method: 'POST', headers: Object.assign({ 'anthropic-beta': 'server-side-fallback-2026-07-01' }, headers), body: JSON.stringify(Object.assign({ fallbacks: 'default' }, body)) }); }
+  catch (e) { throw { code: 'network', message: String(e) }; }
+  if (res.status === 400) {
+    const t = await res.text();
+    if (/fallback/i.test(t)) { try { res = await fetch(API, { method: 'POST', headers, body: JSON.stringify(body) }); } catch (e) { throw { code: 'network', message: String(e) }; } }
+    else throw { code: 'bad_request', message: t.slice(0, 300) };
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403) throw { code: 'bad_key', message: t.slice(0, 200) };
+    if (res.status === 429) throw { code: 'rate_limited', message: t.slice(0, 200) };
+    if (res.status === 529 || res.status >= 500) throw { code: 'overloaded', message: t.slice(0, 200) };
+    throw { code: 'bad_request', message: t.slice(0, 300) };
+  }
+  const msg = await res.json();
+  if (msg.stop_reason === 'refusal') throw { code: 'refused', message: 'declined' };
+  const text = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  if (!text.trim()) throw { code: 'empty', message: 'No text' };
+  return parseJsonLoose(text);
+}
+async function testKey() {
+  const key = apiKey(); if (!key) return 'Enter a key first.';
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } });
+    if (r.ok) return 'Key works.';
+    if (r.status === 401) return 'Key rejected. Check it and paste again.';
+    return 'Could not verify (HTTP ' + r.status + ').';
+  } catch (e) { return 'No connection to the API.'; }
+}
+
+// ====================== Reading prompts ======================
+const PROMPT = `You are reading a photo of supplier receipts or invoices for PIRI FLAME, a restaurant in Cairo, Egypt. The photo may be one receipt, or a page with several receipts on it. Text is Arabic, English, or both: read both fully. Convert Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩) to Western digits. Arabic words to know: الإجمالي / الاجمالى / المجموع / الصافي = total; نقدي / كاش = cash; فيزا / بطاقة = card; ضريبة = VAT; خصم = discount; التاريخ = date. Common Arabic store names: سعودي = Seoudi; العثيم = Othaim Markets; كارفور = Carrefour; بنده = Panda; ريتش بيك = Rich Bake; الصفوة = Al-Safwa; البارون = Al-Baroon; أبو يوسف = Abu Yusuf for Food Supplies; المفازة = Mafaza - Al Sabeel. Any other Arabic store name: write it in English letters. Egyptian receipts usually write dates as day/month/year.
+
+Return ONLY a JSON array with one object per receipt visible in the image, in this exact shape:
+[{"date":"YYYY-MM-DD or null","description":"store name","amount":123.45,"payment":"Cash|Card|Unknown","category":"one of the categories","confidence":"high|low","unclear":["date","amount","description","payment","category"],"note":"short reason if anything is unclear"}]
+
+Read carefully, like an accountant checking a receipt:
+- Read the total digit by digit. Check it against the line items and any subtotal, VAT and discount lines; if they do not add up to the total you read, re-read the total, and if still unsure put "amount" in unclear.
+- Read the date digit by digit; Egyptian receipts are day/month/year, and a printed time next to it usually marks the date line.
+
+Rules:
+- amount is the grand total actually paid (after VAT and discounts), as a plain number in Egyptian pounds. null if you cannot read it.
+- description is the store or supplier name, written the way this list spells it when it matches: ${KNOWN_STORES.join('; ')}. Otherwise the name as printed. If the receipt is a market purchase with no store name, describe the goods in 2-3 words (e.g. "Vegetables", "Pita Bread").
+- payment: "Card" only if the receipt shows a card, Visa, Mastercard, bank or POS payment; "Cash" if it says cash; otherwise "Unknown".
+- category must be exactly one of: ${CATEGORIES.map(c => c.trim()).join(' | ')}. This business files all food, drinks, supermarket, cleaning, stationery and kitchen supplies under "Shopping"; bags, boxes, cutlery, cups, packets under "Packaging"; taxi/Uber/transport under "Uber"; delivery fees under "Delivery/Van Drop Off"; petrol under "Fuel"; cooking gas bills under "Gas"; staff pay under "Wages".
+- unclear lists only the fields you could not read with confidence (blurry, cut off, missing). Leave it empty when everything is clear.
+- confidence is "high" only when every digit of the total and the date is sharp and certain, the store is identifiable, and the receipt is complete and not cut off. Blurry, faded, crumpled, folded or partly hidden: "low". A "high" receipt is saved without a human looking at it, so be strict.
+- If the image contains no receipt at all, return [].
+No text before or after the JSON.`;
+const LOCATE_PROMPT = `This photo may show one receipt, or a page with several receipts laid out on it. Find every separate receipt. Reply with ONLY a JSON array of bounding boxes, one per receipt, as fractions of the image width and height: [{"x":0.05,"y":0.02,"w":0.42,"h":0.48}]. x,y is the top-left corner. Cover each receipt fully. If there is exactly one receipt, return one box. If there is no receipt, return [].`;
+
+async function extractFrom(blob) {
+  const data = await askClaude(PROMPT, blob, { effort: 'high' });
+  if (!Array.isArray(data)) throw { code: 'invalid_json', message: 'not an array' };
+  return data.map(d => {
+    const unclear = Array.isArray(d.unclear) ? d.unclear.map(String) : [];
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') ? d.date : '';
+    if (!date && !unclear.includes('date')) unclear.push('date');
+    const amount = typeof d.amount === 'number' && isFinite(d.amount) ? Math.round(d.amount * 100) / 100 : null;
+    if (amount === null && !unclear.includes('amount')) unclear.push('amount');
+    const category = CATEGORIES.find(c => c.trim().toLowerCase() === String(d.category || '').trim().toLowerCase()) || 'Shopping';
+    const pay = d.payment === 'Cash' ? 'Cash' : 'Card';
+    if (d.payment !== 'Cash' && d.payment !== 'Card' && !unclear.includes('payment')) unclear.push('payment');
+    return { date, description: String(d.description || '').trim(), amount, idv: pay, account: accountFor(pay), category, unclear, note: String(d.note || '').trim(), accountTouched: false, confident: d.confidence === 'high' };
+  });
+}
+async function locate(blob) {
+  try {
+    const boxes = await askClaude(LOCATE_PROMPT, blob, { model: 'claude-sonnet-5-5', effort: 'low' });
+    if (!Array.isArray(boxes)) return null;
+    return boxes.filter(b => b && [b.x, b.y, b.w, b.h].every(v => typeof v === 'number' && isFinite(v)) && b.w > 0.08 && b.h > 0.08 && b.x >= -0.05 && b.y >= -0.05 && b.x + b.w <= 1.05 && b.y + b.h <= 1.05);
+  } catch (e) { return null; }
+}
+function errText(e) {
+  return { no_key: 'Add your API key in Settings first.', bad_key: 'The API key was rejected. Check it in Settings.', rate_limited: 'Too many requests. Wait a minute; it will continue.', overloaded: 'Claude is busy right now. It will retry.', network: 'No internet connection. It will retry when you are back online.', refused: 'This photo could not be processed.', invalid_json: 'Could not read this one. Try a clearer photo.', empty: 'Could not read this one. Try a clearer photo.', bad_request: 'The reading request was rejected: ' + (e && e.message || '') }[e && e.code] || 'Something went wrong reading this photo.';
+}
+
+// ====================== Reading queue ======================
+let queue = [];            // extracted receipts waiting for review (and read errors)
+let pending = [];          // {blob, multi} waiting to be read
+let busy = false, done = 0, taken = 0, autoSaved = 0, lastErr = null;
+const recentKeys = new Set();
+function dupeKey(r) { return `${r.date}|${Math.round((r.amount || 0) * 100)}|${(r.description || '').trim().toLowerCase()}`; }
+function looksDuplicate(r, skipId) { return rows.some(x => x.id !== skipId && x.date === r.date && Math.abs((x.amount || 0) - (r.amount || 0)) < 0.005 && (x.description || '').trim().toLowerCase() === (r.description || '').trim().toLowerCase()); }
+function enqueue(blob, multi) { pending.push({ blob, multi }); taken++; updateCounters(); if (!busy) pump(); }
+async function pump() {
+  busy = true; lastErr = null;
+  while (pending.length) {
+    const item = pending[0];
+    updateCounters();
+    const ok = await readOne(item);
+    if (ok === 'retry') { await new Promise(r => setTimeout(r, 15000)); continue; }
+    pending.shift(); done++;
+    renderQueue(); updateCounters();
+  }
+  busy = false;
+  const parts = []; if (autoSaved) parts.push(`${autoSaved} saved automatically`);
+  const ready = queue.filter(q => !q.error).length; if (ready) parts.push(`${ready} to check`);
+  if (parts.length) toast(parts.join(' · '), 3500);
+  autoSaved = 0; taken = 0; done = 0; updateCounters();
+}
+async function readOne({ blob, multi }) {
+  let pieces = [blob];
+  if (multi) {
+    try {
+      const page = await loadCanvas(blob, 2400);
+      const boxes = await locate(await toBlob(page, 1600));
+      if (boxes && boxes.length >= 2) { pieces = []; for (const b of boxes) { try { pieces.push(await toBlob(cropCanvas(page, b), 1800)); } catch (e) { /* skip */ } } if (!pieces.length) pieces = [blob]; }
+    } catch (e) { pieces = [blob]; }
+  }
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i];
+    try {
+      const items = await extractFrom(piece);
+      if (!items.length) { if (pieces.length === 1) queue.push({ error: 'No receipt found in this photo.', blob: piece, url: URL.createObjectURL(piece), key: 'e' + uid() }); continue; }
+      for (const it of items) {
+        it.blob = piece; it.url = URL.createObjectURL(piece); it.key = 'q' + uid();
+        if (autoSaveOn() && it.confident && !it.unclear.length && it.date && it.amount > 0 && it.description && !looksDuplicate(it) && !recentKeys.has(dupeKey(it))) {
+          try { await saveItem(it, true); autoSaved++; continue; } catch (e) { /* fall through to review */ }
+        }
+        queue.push(it);
+      }
+    } catch (e) {
+      lastErr = e;
+      if (e && (e.code === 'network' || e.code === 'overloaded' || e.code === 'rate_limited')) { updateCounters(); return 'retry'; }
+      queue.push({ error: errText(e), blob: piece, url: URL.createObjectURL(piece), key: 'e' + uid() });
+      if (e && (e.code === 'no_key' || e.code === 'bad_key')) { pending.length = 0; }
+    }
+  }
+  return true;
+}
+function autoSaveOn() { return pref('autosave', 'on') !== 'off'; }
+async function saveItem(q, auto) {
+  const id = uid();
+  if (q.blob) { try { await store.putPhoto(id, q.blob); } catch (e) { /* no photo kept */ } }
+  const row = rowBody(q); row.id = id; row.auto = !!auto; row.photo = !!q.blob;
+  await store.put(row); recentKeys.add(dupeKey(q)); await loadRows(); renderRows();
+}
+function rowBody(r) {
+  return { date: r.date, idv: r.idv, category: r.category, description: r.description, amount: Math.round(r.amount * 100) / 100, account: r.account,
+    flagged: !!(r.unclear && r.unclear.length), note: r.note || '', createdAt: r.createdAt || new Date().toISOString(), exportedAt: r.exportedAt || null };
+}
+function updateCounters() {
+  const left = pending.length;
+  const readTxt = busy ? `Reading ${Math.min(done + 1, taken)} of ${taken}${lastErr && lastErr.code === 'network' ? ' · offline, waiting' : lastErr && lastErr.code === 'rate_limited' ? ' · busy, waiting' : ''}` : 'Ready';
+  $('readState').textContent = readTxt;
+  const toCheck = queue.length;
+  $('badge').hidden = toCheck === 0; $('badge').textContent = toCheck;
+  $('savedState').textContent = toCheck ? `${toCheck} to check` : '';
+  const s = $('status');
+  if (busy || left) { s.hidden = false; s.innerHTML = `<div class="notice"><div class="progress"><div class="spinner"></div><div><strong>${readTxt}</strong><div class="subtle">Each receipt takes 10 to 40 seconds. Keep shooting.</div></div></div></div>`; }
+  else { s.hidden = true; s.innerHTML = ''; }
+}
+
+// ====================== Camera with auto-capture ======================
+const video = $('video'); let stream = null, camTimer = null, analysing = false, camRunning = false;
+const small = document.createElement('canvas'); small.width = 160; small.height = 120; const sctx = small.getContext('2d', { willReadFrequently: true });
+let prevGray = null, lastShotGray = null, steadySince = 0, cooldown = false, shots = 0, wake = null;
+const SENS = { careful: { sharp: 55, motion: 3.0, hold: 900, change: 14 }, normal: { sharp: 40, motion: 4.0, hold: 600, change: 12 }, fast: { sharp: 30, motion: 5.5, hold: 350, change: 10 } };
+function sens() { return SENS[pref('sens', 'normal')] || SENS.normal; }
+function autoOn() { return $('autoToggle').getAttribute('aria-pressed') === 'true'; }
+
+async function startCamera() {
+  $('camOff').hidden = true; $('camState').textContent = 'Starting camera…';
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 3072 } }, audio: false });
+  } catch (e) {
+    $('camOff').hidden = false; $('camOffMsg').textContent = e && e.name === 'NotAllowedError' ? 'Camera access was refused. Allow the camera for this site in Settings, Safari, then tap Start again.' : 'Could not open the camera. Use Import photos instead.';
+    $('camState').textContent = 'Camera off'; return;
+  }
+  video.srcObject = stream; await video.play().catch(() => {});
+  camRunning = true; setPref('camAuto', '1'); prevGray = null; lastShotGray = null; steadySince = 0; cooldown = false;
+  try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) { wake = null; }
+  camTimer = setInterval(analyse, 120);
+  $('camState').textContent = autoOn() ? 'Hold over a receipt' : 'Tap the button to shoot';
+}
+function stopCamera() {
+  camRunning = false; clearInterval(camTimer); camTimer = null;
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } video.srcObject = null;
+  if (wake) { try { wake.release(); } catch (e) { /* ignore */ } wake = null; }
+  $('camOff').hidden = false; $('camOffMsg').textContent = 'Camera stopped. Tap Start to continue.'; $('camState').textContent = 'Camera off'; setPref('camAuto', '0');
+}
+function grayFrame() {
+  if (!video.videoWidth) return null;
+  sctx.drawImage(video, 0, 0, small.width, small.height);
+  const d = sctx.getImageData(0, 0, small.width, small.height).data; const g = new Float32Array(small.width * small.height);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  return g;
+}
+function sharpness(g) { // variance of a 4-neighbour Laplacian, central region only
+  const w = small.width, h = small.height; let sum = 0, sum2 = 0, n = 0;
+  for (let y = 12; y < h - 12; y++) for (let x = 16; x < w - 16; x++) { const i = y * w + x; const v = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]; sum += v; sum2 += v * v; n++; }
+  const mean = sum / n; return sum2 / n - mean * mean;
+}
+function diff(a, b) { if (!a || !b) return 999; let s = 0; for (let i = 0; i < a.length; i += 3) s += Math.abs(a[i] - b[i]); return s / (a.length / 3); }
+function analyse() {
+  if (analysing || !camRunning) return; analysing = true;
+  try {
+    const g = grayFrame(); if (!g) return;
+    const motion = diff(g, prevGray); prevGray = g;
+    const guide = $('guide'); const st = $('camState');
+    if (!autoOn()) { guide.className = 'guide'; return; }
+    const S = sens(); const now = performance.now();
+    const changed = diff(g, lastShotGray) > S.change;
+    if (cooldown) { if (changed) { cooldown = false; st.textContent = 'Next receipt'; } else { st.textContent = 'Move to the next receipt'; guide.className = 'guide'; } return; }
+    if (motion > S.motion) { steadySince = 0; guide.className = 'guide'; st.textContent = 'Hold still'; return; }
+    const sh = sharpness(g);
+    if (sh < S.sharp) { steadySince = 0; guide.className = 'guide'; st.textContent = sh < S.sharp * 0.4 ? 'Hold over a receipt' : 'Focusing…'; return; }
+    if (!steadySince) steadySince = now;
+    guide.className = 'guide steady'; st.textContent = 'Steady…';
+    if (now - steadySince >= S.hold) { guide.className = 'guide ready'; steadySince = 0; takeShot(g); }
+  } finally { analysing = false; }
+}
+async function takeShot(g) {
+  if (!camRunning || !video.videoWidth) return;
+  cooldown = true; lastShotGray = g || grayFrame();
+  const c = $('work'); c.width = video.videoWidth; c.height = video.videoHeight; c.getContext('2d').drawImage(video, 0, 0);
+  $('flash').classList.remove('on'); void $('flash').offsetWidth; $('flash').classList.add('on'); beep(); if (navigator.vibrate) navigator.vibrate(40);
+  let blob; try { blob = await toBlob(c, 2400, 0.9); } catch (e) { toast('Could not save that shot.'); cooldown = false; return; }
+  shots++; $('camCount').textContent = `${shots} shot${shots === 1 ? '' : 's'}`;
+  const im = document.createElement('img'); im.src = URL.createObjectURL(blob); const strip = $('strip'); strip.append(im); if (strip.children.length > 8) strip.firstChild.remove();
+  $('camState').textContent = 'Got it. Next receipt';
+  enqueue(blob, false);
+}
+let audio = null;
+function beep() { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); const o = audio.createOscillator(), gn = audio.createGain(); o.frequency.value = 1200; gn.gain.value = 0.08; o.connect(gn); gn.connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.07); } catch (e) { /* silent */ } }
+
+// ====================== Imports (photos and PDFs) ======================
+async function importFiles(files) {
+  const multi = pref('multi', 'on') !== 'off';
+  for (const f of Array.from(files)) {
+    if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '')) { await importPdf(f, multi); continue; }
+    try { const c = await loadCanvas(f, 2400); enqueue(await toBlob(c, 2400, 0.9), multi); } catch (e) { toast('Could not open ' + (f.name || 'a photo')); }
+  }
+  showTab('list');
+}
+async function importPdf(file, multi) {
+  if (!window.pdfjsLib) { toast('PDF support did not load. Check your connection and reload.', 4000); return; }
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    for (let p = 1; p <= pdf.numPages; p++) {
+      toast(`Preparing page ${p} of ${pdf.numPages}`, 1200);
+      const page = await pdf.getPage(p); const v1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(4, 2400 / Math.max(v1.width, v1.height)) });
+      const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      enqueue(await toBlob(c, 2400, 0.9), multi); c.width = c.height = 1;
+    }
+    pdf.destroy();
+  } catch (e) { toast('Could not open this PDF.', 4000); }
+}
+
+// ====================== Review cards ======================
+function formHtml(r, key, opts = {}) {
+  const u = new Set(r.unclear || []);
+  const sel = (name, list, cur) => `<select id="${key}-${name}">${list.map(v => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(v.trim())}</option>`).join('')}</select>`;
+  return `${r.note ? `<div class="flagnote">${esc(r.note)}</div>` : ''}
+    <div class="grid">
+      <div class="field ${u.has('date') ? 'unclear' : ''}"><label for="${key}-date">Date</label><input type="date" id="${key}-date" value="${esc(r.date || '')}"></div>
+      <div class="field ${u.has('amount') ? 'unclear' : ''}"><label for="${key}-amount">Total (L.E.)</label><input type="number" inputmode="decimal" step="0.01" min="0" id="${key}-amount" value="${r.amount ?? ''}" placeholder="0.00"></div>
+      <div class="field wide ${u.has('description') ? 'unclear' : ''}"><label for="${key}-desc">Store or description</label><input type="text" id="${key}-desc" value="${esc(r.description || '')}" list="stores" autocomplete="off"></div>
+      <div class="field wide ${u.has('payment') ? 'unclear' : ''}"><label>Paid by</label><div class="seg" id="${key}-seg">${IDS.map(v => `<button type="button" data-v="${v}" aria-pressed="${v === r.idv}">${v}</button>`).join('')}</div></div>
+      <div class="field ${u.has('category') ? 'unclear' : ''}"><label for="${key}-category">Category</label>${sel('category', CATEGORIES, r.category)}</div>
+      <div class="field"><label for="${key}-account">Account</label>${sel('account', ACCOUNTS, r.account)}</div>
+    </div>
+    <div class="dupe" id="${key}-dupe" hidden>Looks like a duplicate of a saved receipt.</div>
+    <div class="actions">${opts.editMode ? `<button class="btn danger" type="button" id="${key}-delete">Delete</button><button class="btn" type="button" id="${key}-cancel">Cancel</button>` : `<button class="btn" type="button" id="${key}-skip">Skip</button>`}<button class="btn primary" type="button" id="${key}-save">Save</button></div>`;
+}
+function wireForm(r, key) {
+  const seg = $(`${key}-seg`);
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); r.idv = b.dataset.v; if (!r.accountTouched) { r.account = accountFor(r.idv); $(`${key}-account`).value = r.account; } checkDupe(r, key); }));
+  $(`${key}-account`).addEventListener('change', e => { r.account = e.target.value; r.accountTouched = true; });
+  $(`${key}-category`).addEventListener('change', e => { r.category = e.target.value; });
+  $(`${key}-date`).addEventListener('input', e => { r.date = e.target.value; checkDupe(r, key); });
+  $(`${key}-amount`).addEventListener('input', e => { r.amount = e.target.value === '' ? null : Number(e.target.value); checkDupe(r, key); });
+  $(`${key}-desc`).addEventListener('input', e => { r.description = e.target.value; checkDupe(r, key); });
+  checkDupe(r, key);
+}
+function checkDupe(r, key) { const d = $(`${key}-dupe`); if (d) d.hidden = !looksDuplicate(r, r.id); }
+function readForm(r, key) {
+  r.date = $(`${key}-date`).value; r.amount = $(`${key}-amount`).value === '' ? null : Number($(`${key}-amount`).value);
+  r.description = $(`${key}-desc`).value.trim(); r.category = $(`${key}-category`).value; r.account = $(`${key}-account`).value;
+  const errs = []; if (!r.date) errs.push('date'); if (r.amount === null || !isFinite(r.amount)) errs.push('amount'); if (!r.description) errs.push('store or description'); return errs;
+}
+function renderQueue() {
+  const sec = $('reviewSection'), list = $('reviewList'); sec.hidden = queue.length === 0; list.innerHTML = '';
+  queue.forEach(q => {
+    const key = q.key; const card = document.createElement('div');
+    if (q.error) {
+      card.className = 'card flagged';
+      card.innerHTML = `<div class="card-head">${q.url ? `<button class="thumb" type="button" style="background-image:url(${q.url})" aria-label="View photo"></button>` : ''}<div class="meta"><div class="title">${esc(q.error)}</div></div></div><div class="actions"><button class="btn" type="button" id="${key}-dismiss">Dismiss</button><button class="btn primary" type="button" id="${key}-manual">Type it in</button></div>`;
+      list.append(card);
+      const th = card.querySelector('.thumb'); if (th) th.addEventListener('click', () => showPhoto(q.url));
+      $(`${key}-dismiss`).addEventListener('click', () => { queue = queue.filter(x => x !== q); renderQueue(); updateCounters(); });
+      $(`${key}-manual`).addEventListener('click', () => { Object.assign(q, { error: null, date: todayIso(), description: '', amount: null, idv: 'Card', account: 'BANK ', category: 'Shopping', unclear: [], note: '', accountTouched: false }); renderQueue(); });
+      return;
+    }
+    card.className = 'card' + (q.unclear && q.unclear.length ? ' flagged' : '');
+    card.innerHTML = `<div class="card-head">${q.url ? `<button class="thumb" type="button" style="background-image:url(${q.url})" aria-label="View photo"></button>` : ''}<div class="meta"><div class="title">${esc(q.description || 'Receipt')}</div><div class="subtle">${q.unclear && q.unclear.length ? 'Check: ' + esc(q.unclear.join(', ')) : (q.url ? 'Read clearly' : 'Typed in by hand')}</div></div></div>` + formHtml(q, key);
+    list.append(card);
+    const th = card.querySelector('.thumb'); if (th) th.addEventListener('click', () => showPhoto(q.url));
+    wireForm(q, key);
+    $(`${key}-skip`).addEventListener('click', () => { queue = queue.filter(x => x !== q); renderQueue(); updateCounters(); });
+    $(`${key}-save`).addEventListener('click', async () => {
+      const errs = readForm(q, key); if (errs.length) { toast('Fill in: ' + errs.join(', ')); return; }
+      const btn = $(`${key}-save`); btn.disabled = true; btn.textContent = 'Saving…';
+      try { await saveItem(q, false); queue = queue.filter(x => x !== q); renderQueue(); updateCounters(); toast('Saved'); }
+      catch (e) { btn.disabled = false; btn.textContent = 'Save'; toast('Could not save. Try again.', 3500); }
+    });
+  });
+}
+
+// ====================== Saved list ======================
+let editing = null; const photoUrls = new Map();
+async function photoUrl(id) { if (photoUrls.has(id)) return photoUrls.get(id); try { const p = await store.getPhoto(id); if (!p || !p.blob) return null; const u = URL.createObjectURL(p.blob); photoUrls.set(id, u); return u; } catch (e) { return null; } }
+function renderRows() {
+  const pendingRows = rows.filter(r => !r.exportedAt); const total = pendingRows.reduce((s, r) => s + (r.amount || 0), 0);
+  $('statbar').innerHTML = `<div class="stat"><strong>${pendingRows.length}</strong> to export</div><div class="stat"><strong>${fmtAmt(total)}</strong> L.E.</div><div class="stat"><strong>${rows.filter(r => r.flagged && !r.exportedAt).length}</strong> marked check</div>`;
+  $('btnExport').disabled = rows.length === 0;
+  const box = $('rows'); box.innerHTML = '';
+  if (!rows.length) { box.innerHTML = '<div class="empty"><div class="big">No receipts yet</div>Go to Camera and hold the phone over a receipt. It shoots by itself.</div>'; return; }
+  let lastDay = null;
+  rows.forEach(r => {
+    if (r.date !== lastDay) { const h = document.createElement('div'); h.className = 'daygroup'; h.textContent = isoToNice(r.date); box.append(h); lastDay = r.date; }
+    if (editing === r.id) {
+      const key = 'e' + r.id; const card = document.createElement('div'); card.className = 'card'; const draft = Object.assign({}, r, { accountTouched: true });
+      card.innerHTML = `<div class="card-head">${r.photo ? `<button class="thumb" type="button" id="${key}-thumb" aria-label="View photo"></button>` : ''}<div class="meta"><div class="title">Edit receipt</div>${r.note ? `<div class="subtle">${esc(r.note)}</div>` : ''}</div></div>` + formHtml(draft, key, { editMode: true });
+      box.append(card);
+      if (r.photo) photoUrl(r.id).then(u => { const t = $(`${key}-thumb`); if (t && u) { t.style.backgroundImage = `url(${u})`; t.addEventListener('click', () => showPhoto(u)); } });
+      wireForm(draft, key);
+      $(`${key}-cancel`).addEventListener('click', () => { editing = null; renderRows(); });
+      let armed = false;
+      $(`${key}-delete`).addEventListener('click', async (e) => {
+        if (!armed) { armed = true; e.target.textContent = 'Really delete?'; setTimeout(() => { armed = false; if (e.target.isConnected) e.target.textContent = 'Delete'; }, 3000); return; }
+        e.target.disabled = true; try { await store.del(r.id); await store.delPhoto(r.id); editing = null; await loadRows(); renderRows(); toast('Deleted'); } catch (err) { e.target.disabled = false; toast('Could not delete.'); }
+      });
+      $(`${key}-save`).addEventListener('click', async () => {
+        const errs = readForm(draft, key); if (errs.length) { toast('Fill in: ' + errs.join(', ')); return; }
+        try { const body = rowBody(draft); body.id = r.id; body.photo = r.photo; body.auto = r.auto; body.flagged = false; body.note = ''; await store.put(body); editing = null; await loadRows(); renderRows(); toast('Updated'); } catch (err) { toast('Could not save.'); }
+      });
+      return;
+    }
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'row' + (r.flagged ? ' flagged' : '');
+    b.innerHTML = `<div class="r1">${esc(r.description)}</div><div class="amt">${fmtAmt(r.amount)}</div><div class="r2"><span class="pill ${r.idv === 'Cash' ? 'cash' : ''}">${esc(r.idv)} · ${esc(String(r.account).trim())}</span><span class="pill">${esc(String(r.category).trim())}</span>${r.flagged ? '<span class="pill flag">Check</span>' : ''}${r.auto ? '<span class="pill">Auto</span>' : ''}${r.exportedAt ? '<span class="pill">Exported</span>' : ''}</div>`;
+    b.addEventListener('click', () => { editing = r.id; renderRows(); const el = $('e' + r.id + '-date'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+    box.append(b);
+  });
+}
+
+// ====================== Export ======================
+function buildCsv(list) {
+  const lines = ['DATE,ID,CATEGORY,DESCRIPTION,TOTAL AMOUNT,ACCOUNT'];
+  list.forEach(r => lines.push([isoToSheet(r.date), r.idv, r.category, r.description, (Math.round(r.amount * 100) / 100).toFixed(2), r.account].map(csvCell).join(',')));
+  return lines.join('\r\n') + '\r\n';
+}
+function showExport() {
+  const sec = $('exportSection'), box = $('exportBox');
+  const sorted = (l) => l.slice().sort((a, b) => (a.date + a.createdAt).localeCompare(b.date + b.createdAt));
+  const pendingRows = sorted(rows.filter(r => !r.exportedAt)); const flagged = pendingRows.filter(r => r.flagged).length;
+  sec.hidden = false;
+  box.innerHTML = `<strong>Export CSV</strong><div class="subtle" style="margin-top:4px">Columns match the Expense tab: Date, ID, Category, Description, Total amount, Account.</div>
+    ${flagged ? `<div class="flagnote" style="margin-top:10px">${flagged} row${flagged === 1 ? '' : 's'} still marked Check. Open and confirm them first, or export anyway.</div>` : ''}
+    <div class="export-opts"><button class="btn primary small" type="button" id="expNew" ${pendingRows.length ? '' : 'disabled'}>Export ${pendingRows.length} new</button><button class="btn small" type="button" id="expAll">Export all ${rows.length}</button><button class="btn small" type="button" id="expClose">Close</button></div>`;
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('expClose').addEventListener('click', () => { sec.hidden = true; });
+  $('expNew').addEventListener('click', () => doExport(pendingRows, true));
+  $('expAll').addEventListener('click', () => doExport(sorted(rows), false));
+}
+async function doExport(list, mark) {
+  if (!list.length) return;
+  const csv = buildCsv(list); const name = `piri-flame-expenses-${todayIso()}.csv`;
+  const file = new File([csv], name, { type: 'text/csv' });
+  let delivered = false;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); delivered = true; } catch (e) { if (e && e.name === 'AbortError') { toast('Export cancelled'); return; } }
+  }
+  if (!delivered) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); delivered = true;
+  }
+  if (mark) { const stamp = new Date().toISOString(); for (const r of list) { r.exportedAt = stamp; try { await store.put(r); } catch (e) { /* stays unmarked */ } } await loadRows(); renderRows(); }
+  toast(`${list.length} rows exported`); $('exportSection').hidden = true;
+}
+
+// ====================== Settings & wiring ======================
+function showPhoto(url) { if (!url) return; $('overlayImg').src = url; $('overlay').hidden = false; }
+$('overlayClose').addEventListener('click', () => { $('overlay').hidden = true; });
+$('overlay').addEventListener('click', (e) => { if (e.target === $('overlay')) $('overlay').hidden = true; });
+function showTab(name) {
+  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false'));
+  $('camScreen').hidden = name !== 'cam'; $('listScreen').hidden = name !== 'list'; $('setScreen').hidden = name !== 'set';
+  if (name === 'set') updateStorage();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+$('btnStart').addEventListener('click', () => { if (!apiKey()) { toast('Add your API key in Settings first.', 3000); showTab('set'); return; } startCamera(); });
+$('btnStop').addEventListener('click', stopCamera);
+$('shutter').addEventListener('click', () => { if (!camRunning) { startCamera(); return; } takeShot(null); });
+$('autoToggle').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false'); setPref('auto', on ? 'on' : 'off'); $('camState').textContent = on ? 'Hold over a receipt' : 'Tap the button to shoot'; });
+$('btnImport').addEventListener('click', () => $('fileImport').click());
+$('fileImport').addEventListener('change', (e) => { importFiles(e.target.files); e.target.value = ''; });
+$('btnExport').addEventListener('click', showExport);
+$('apiKey').value = pref('apiKey', ''); $('apiKey').addEventListener('change', e => { setPref('apiKey', e.target.value.trim()); $('keyResult').textContent = ''; });
+$('btnShowKey').addEventListener('click', () => { const i = $('apiKey'); i.type = i.type === 'password' ? 'text' : 'password'; $('btnShowKey').textContent = i.type === 'password' ? 'Show' : 'Hide'; });
+$('btnTestKey').addEventListener('click', async () => { setPref('apiKey', $('apiKey').value.trim()); $('keyResult').textContent = 'Checking…'; $('keyResult').textContent = await testKey(); });
+$('model').value = model(); $('model').addEventListener('change', e => setPref('model', e.target.value));
+$('autosave').checked = autoSaveOn(); $('autosave').addEventListener('change', e => setPref('autosave', e.target.checked ? 'on' : 'off'));
+$('sens').value = pref('sens', 'normal'); $('sens').addEventListener('change', e => setPref('sens', e.target.value));
+$('multi').checked = pref('multi', 'on') !== 'off'; $('multi').addEventListener('change', e => setPref('multi', e.target.checked ? 'on' : 'off'));
+$('autoToggle').setAttribute('aria-pressed', pref('auto', 'on') === 'on' ? 'true' : 'false');
+const dl = document.createElement('datalist'); dl.id = 'stores'; dl.innerHTML = KNOWN_STORES.map(s => `<option value="${esc(s)}">`).join(''); document.body.append(dl);
+async function updateStorage() {
+  let txt = `${rows.length} receipts on this phone`;
+  try { if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); txt += ` · ${(e.usage / 1048576).toFixed(0)} MB used`; } } catch (err) { /* ignore */ }
+  $('storageInfo').textContent = txt;
+}
+let clearArmed = false;
+$('btnClearExported').addEventListener('click', async (e) => {
+  const n = rows.filter(r => r.exportedAt).length; if (!n) { toast('Nothing exported yet.'); return; }
+  if (!clearArmed) { clearArmed = true; e.target.textContent = `Really delete ${n} exported?`; setTimeout(() => { clearArmed = false; if (e.target.isConnected) e.target.textContent = 'Delete exported receipts and their photos'; }, 3500); return; }
+  for (const r of rows.filter(r => r.exportedAt)) { try { await store.del(r.id); await store.delPhoto(r.id); } catch (err) { /* continue */ } }
+  clearArmed = false; e.target.textContent = 'Delete exported receipts and their photos'; await loadRows(); renderRows(); updateStorage(); toast(`${n} deleted`);
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden && camRunning) stopCamera(); });
+
+(async () => {
+  try { idb = await openDb(); await loadRows(); } catch (e) { toast('Storage is not available in this browser. Receipts will not be kept.', 5000); }
+  renderRows(); updateCounters();
+  if (!apiKey()) { $('camOff').hidden = false; $('camOffMsg').textContent = 'First time: add your Anthropic API key in Settings, then come back and tap Start.'; }
+  else { $('camOff').hidden = false; }
+})();
+</script>
+</body>
+</html>
