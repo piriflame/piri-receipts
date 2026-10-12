@@ -250,8 +250,8 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 let idb = null;
 function openDb() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open('piri-receipts', 1);
-    r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains('rows')) d.createObjectStore('rows', { keyPath: 'id' }); if (!d.objectStoreNames.contains('photos')) d.createObjectStore('photos', { keyPath: 'id' }); };
+    const r = indexedDB.open('piri-receipts', 2);
+    r.onupgradeneeded = () => { const d = r.result; for (const n of ['rows', 'photos', 'pending', 'queue']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' }); };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
 }
@@ -265,7 +265,17 @@ const store = {
   putPhoto: (id, blob) => tx('photos', 'readwrite', s => s.put({ id, blob })),
   getPhoto: (id) => tx('photos', 'readonly', s => s.get(id)),
   delPhoto: (id) => tx('photos', 'readwrite', s => s.delete(id)),
+  allPending: () => tx('pending', 'readonly', s => s.getAll()),
+  putPending: (p) => tx('pending', 'readwrite', s => s.put(p)),
+  delPending: (id) => tx('pending', 'readwrite', s => s.delete(id)),
+  allQueue: () => tx('queue', 'readonly', s => s.getAll()),
+  putQueue: (q) => tx('queue', 'readwrite', s => s.put(q)),
+  delQueue: (id) => tx('queue', 'readwrite', s => s.delete(id)),
 };
+// Review-queue items are kept on disk (with their photo) so closing the app loses nothing.
+const QFIELDS = ['id', 'error', 'date', 'description', 'amount', 'idv', 'account', 'category', 'unclear', 'note', 'confident', 'askDupe', 'removedDupe', 'createdAt'];
+async function persistQ(q) { const o = {}; for (const f of QFIELDS) if (q[f] !== undefined) o[f] = q[f]; o.blob = q.blob || null; try { await store.putQueue(o); } catch (e) { /* memory only */ } }
+async function dropQ(q) { queue = queue.filter(x => x !== q); try { await store.delQueue(q.id); } catch (e) { /* ignore */ } renderQueue(); updateCounters(); }
 let rows = [];
 async function loadRows() { rows = (await store.all()).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || '')); }
 
@@ -390,13 +400,28 @@ function errText(e) {
 }
 
 // ====================== Reading queue ======================
-let queue = [];            // extracted receipts waiting for review (and read errors)
-let pending = [];          // {blob, multi} waiting to be read
-let busy = false, done = 0, taken = 0, autoSaved = 0, lastErr = null;
-const recentKeys = new Set();
+let queue = [];            // extracted receipts waiting for review (and read errors, duplicate questions)
+let pending = [];          // {id, blob, multi} waiting to be read
+let busy = false, done = 0, taken = 0, lastErr = null;
+const batch = { pages: 0, saved: 0, check: 0, dupes: 0, ask: 0, none: 0, errors: 0, started: null };
 function dupeKey(r) { return `${r.date}|${Math.round((r.amount || 0) * 100)}|${(r.description || '').trim().toLowerCase()}`; }
+function nearKey(r) { return `${Math.round((r.amount || 0) * 100)}|${(r.description || '').trim().toLowerCase()}`; }
 function looksDuplicate(r, skipId) { return rows.some(x => x.id !== skipId && x.date === r.date && Math.abs((x.amount || 0) - (r.amount || 0)) < 0.005 && (x.description || '').trim().toLowerCase() === (r.description || '').trim().toLowerCase()); }
-function enqueue(blob, multi) { pending.push({ blob, multi }); taken++; updateCounters(); if (!busy) pump(); }
+// Exact copy (same date, store, amount) of a saved row or of a receipt already seen in this batch: removed.
+// Same store and amount but a different date: could be a second purchase, so it is asked.
+function findDupe(it) {
+  const k = dupeKey(it), nk = nearKey(it);
+  const exact = rows.find(x => dupeKey(x) === k) || queue.find(x => !x.error && !x.removedDupe && x !== it && dupeKey(x) === k);
+  if (exact) return { exact };
+  const near = rows.find(x => nearKey(x) === nk) || queue.find(x => !x.error && !x.removedDupe && x !== it && nearKey(x) === nk);
+  return near ? { near } : null;
+}
+async function enqueue(blob, multi) {
+  const p = { id: uid(), blob, multi, createdAt: new Date().toISOString() };
+  try { await store.putPending(p); } catch (e) { /* memory only */ }
+  pending.push(p); taken++; if (!batch.started) { Object.assign(batch, { pages: 0, saved: 0, check: 0, dupes: 0, ask: 0, none: 0, errors: 0, started: new Date().toISOString() }); } batch.pages++;
+  updateCounters(); if (!busy) pump();
+}
 async function pump() {
   busy = true; lastErr = null;
   while (pending.length) {
@@ -404,14 +429,14 @@ async function pump() {
     updateCounters();
     const ok = await readOne(item);
     if (ok === 'retry') { await new Promise(r => setTimeout(r, 15000)); continue; }
-    pending.shift(); done++;
+    pending.shift(); done++; try { await store.delPending(item.id); } catch (e) { /* ignore */ }
     renderQueue(); updateCounters();
   }
   busy = false;
-  const parts = []; if (autoSaved) parts.push(`${autoSaved} saved automatically`);
-  const ready = queue.filter(q => !q.error).length; if (ready) parts.push(`${ready} to check`);
-  if (parts.length) toast(parts.join(' · '), 3500);
-  autoSaved = 0; taken = 0; done = 0; updateCounters();
+  const parts = []; if (batch.saved) parts.push(`${batch.saved} saved`); if (batch.check) parts.push(`${batch.check} to check`); if (batch.dupes) parts.push(`${batch.dupes} duplicates removed`); if (batch.ask) parts.push(`${batch.ask} to decide`);
+  if (parts.length) toast(parts.join(' · '), 4000);
+  setPref('lastBatch', JSON.stringify(Object.assign({ finished: new Date().toISOString() }, batch)));
+  batch.started = null; taken = 0; done = 0; updateCounters(); renderQueue();
 }
 async function readOne({ blob, multi }) {
   let pieces = [blob];
@@ -426,29 +451,44 @@ async function readOne({ blob, multi }) {
     const piece = pieces[i];
     try {
       const items = await extractFrom(piece);
-      if (!items.length) { if (pieces.length === 1) queue.push({ error: 'No receipt found in this photo.', blob: piece, url: URL.createObjectURL(piece), key: 'e' + uid() }); continue; }
+      if (!items.length) { if (pieces.length === 1) { batch.none++; await pushQ({ error: 'No receipt found in this photo.', blob: piece }); } continue; }
       for (const it of items) {
-        it.blob = piece; it.url = URL.createObjectURL(piece); it.key = 'q' + uid();
-        if (autoSaveOn() && it.confident && !it.unclear.length && it.date && it.amount > 0 && it.description && !looksDuplicate(it) && !recentKeys.has(dupeKey(it))) {
-          try { await saveItem(it, true); autoSaved++; continue; } catch (e) { /* fall through to review */ }
+        it.blob = piece; it.id = uid(); it.createdAt = new Date().toISOString();
+        const complete = it.date && it.amount > 0 && it.description;
+        const d = complete ? findDupe(it) : null;
+        if (d && d.exact) { batch.dupes++; it.removedDupe = { date: d.exact.date, amount: d.exact.amount, description: d.exact.description }; await pushQ(it); continue; }
+        if (d && d.near) { batch.ask++; it.askDupe = { date: d.near.date, amount: d.near.amount, description: d.near.description }; await pushQ(it); continue; }
+        if (autoSaveOn() && it.confident && !it.unclear.length && complete) {
+          try { await saveItem(it, true); batch.saved++; continue; } catch (e) { /* fall through to review */ }
         }
-        queue.push(it);
+        batch.check++; await pushQ(it);
       }
     } catch (e) {
       lastErr = e;
       if (e && (e.code === 'network' || e.code === 'overloaded' || e.code === 'rate_limited')) { updateCounters(); return 'retry'; }
-      queue.push({ error: errText(e), blob: piece, url: URL.createObjectURL(piece), key: 'e' + uid() });
+      batch.errors++; await pushQ({ error: errText(e), blob: piece });
       if (e && (e.code === 'no_key' || e.code === 'bad_key')) { pending.length = 0; }
     }
   }
   return true;
 }
+async function pushQ(q) { if (!q.id) q.id = uid(); if (!q.createdAt) q.createdAt = new Date().toISOString(); if (q.blob && !q.url) q.url = URL.createObjectURL(q.blob); queue.push(q); await persistQ(q); }
 function autoSaveOn() { return pref('autosave', 'on') !== 'off'; }
 async function saveItem(q, auto) {
   const id = uid();
   if (q.blob) { try { await store.putPhoto(id, q.blob); } catch (e) { /* no photo kept */ } }
   const row = rowBody(q); row.id = id; row.auto = !!auto; row.photo = !!q.blob;
-  await store.put(row); recentKeys.add(dupeKey(q)); await loadRows(); renderRows();
+  await store.put(row); await loadRows(); renderRows();
+}
+async function restoreQueue() {
+  try {
+    const saved = await store.allQueue();
+    for (const q of saved) { if (q.blob) q.url = URL.createObjectURL(q.blob); q.accountTouched = false; queue.push(q); }
+    queue.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    const pend = (await store.allPending()).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    for (const p of pend) { pending.push(p); taken++; }
+    if (pending.length) { Object.assign(batch, { pages: pending.length, saved: 0, check: 0, dupes: 0, ask: 0, none: 0, errors: 0, started: new Date().toISOString() }); if (apiKey()) pump(); }
+  } catch (e) { /* nothing to restore */ }
 }
 function rowBody(r) {
   return { date: r.date, idv: r.idv, category: r.category, description: r.description, amount: Math.round(r.amount * 100) / 100, account: r.account,
@@ -458,11 +498,11 @@ function updateCounters() {
   const left = pending.length;
   const readTxt = busy ? `Reading ${Math.min(done + 1, taken)} of ${taken}${lastErr && lastErr.code === 'network' ? ' · offline, waiting' : lastErr && lastErr.code === 'rate_limited' ? ' · busy, waiting' : ''}` : 'Ready';
   $('readState').textContent = readTxt;
-  const toCheck = queue.length;
+  const toCheck = queue.filter(q => !q.removedDupe).length;
   $('badge').hidden = toCheck === 0; $('badge').textContent = toCheck;
-  $('savedState').textContent = toCheck ? `${toCheck} to check` : '';
+  $('savedState').textContent = toCheck ? `${toCheck} to check` : (batch.saved ? `${batch.saved} saved` : '');
   const s = $('status');
-  if (busy || left) { s.hidden = false; s.innerHTML = `<div class="notice"><div class="progress"><div class="spinner"></div><div><strong>${readTxt}</strong><div class="subtle">Each receipt takes 10 to 40 seconds. Keep shooting.</div></div></div></div>`; }
+  if (busy || left) { s.hidden = false; s.innerHTML = `<div class="notice"><div class="progress"><div class="spinner"></div><div><strong>${readTxt}</strong><div class="subtle">Each receipt takes 10 to 40 seconds. Keep shooting.${batch.saved ? ` ${batch.saved} saved so far.` : ''}</div></div></div></div>`; }
   else { s.hidden = true; s.innerHTML = ''; }
 }
 
@@ -597,32 +637,68 @@ function readForm(r, key) {
   r.description = $(`${key}-desc`).value.trim(); r.category = $(`${key}-category`).value; r.account = $(`${key}-account`).value;
   const errs = []; if (!r.date) errs.push('date'); if (r.amount === null || !isFinite(r.amount)) errs.push('amount'); if (!r.description) errs.push('store or description'); return errs;
 }
+function batchSummaryHtml() {
+  let b = null; try { b = JSON.parse(pref('lastBatch', 'null')); } catch (e) { b = null; }
+  if (!b || !b.pages) return '';
+  const when = b.finished ? new Date(b.finished).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const parts = [`${b.saved} saved automatically`, `${b.check} to check`, `${b.dupes} duplicate${b.dupes === 1 ? '' : 's'} removed`, `${b.ask} to decide`, `${b.none} with no receipt`, `${b.errors} error${b.errors === 1 ? '' : 's'}`];
+  return `<div class="notice"><strong>Last batch: ${b.pages} page${b.pages === 1 ? '' : 's'}</strong> <span class="subtle">${esc(when)}</span><div class="subtle" style="margin-top:4px">${parts.join(' · ')}</div></div>`;
+}
 function renderQueue() {
-  const sec = $('reviewSection'), list = $('reviewList'); sec.hidden = queue.length === 0; list.innerHTML = '';
-  queue.forEach(q => {
-    const key = q.key; const card = document.createElement('div');
+  const sec = $('reviewSection'), list = $('reviewList');
+  const active = queue.filter(q => !q.removedDupe), removed = queue.filter(q => q.removedDupe);
+  sec.hidden = queue.length === 0; list.innerHTML = (busy ? '' : batchSummaryHtml());
+  active.forEach(q => {
+    const key = 'q' + q.id; const card = document.createElement('div');
+    const thumb = q.url ? `<button class="thumb" type="button" style="background-image:url(${q.url})" aria-label="View photo"></button>` : '';
     if (q.error) {
       card.className = 'card flagged';
-      card.innerHTML = `<div class="card-head">${q.url ? `<button class="thumb" type="button" style="background-image:url(${q.url})" aria-label="View photo"></button>` : ''}<div class="meta"><div class="title">${esc(q.error)}</div></div></div><div class="actions"><button class="btn" type="button" id="${key}-dismiss">Dismiss</button><button class="btn primary" type="button" id="${key}-manual">Type it in</button></div>`;
+      card.innerHTML = `<div class="card-head">${thumb}<div class="meta"><div class="title">${esc(q.error)}</div></div></div><div class="actions"><button class="btn" type="button" id="${key}-dismiss">Dismiss</button><button class="btn primary" type="button" id="${key}-manual">Type it in</button></div>`;
       list.append(card);
       const th = card.querySelector('.thumb'); if (th) th.addEventListener('click', () => showPhoto(q.url));
-      $(`${key}-dismiss`).addEventListener('click', () => { queue = queue.filter(x => x !== q); renderQueue(); updateCounters(); });
-      $(`${key}-manual`).addEventListener('click', () => { Object.assign(q, { error: null, date: todayIso(), description: '', amount: null, idv: 'Card', account: 'BANK ', category: 'Shopping', unclear: [], note: '', accountTouched: false }); renderQueue(); });
+      $(`${key}-dismiss`).addEventListener('click', () => dropQ(q));
+      $(`${key}-manual`).addEventListener('click', async () => { Object.assign(q, { error: null, date: todayIso(), description: '', amount: null, idv: 'Card', account: 'BANK ', category: 'Shopping', unclear: [], note: '', accountTouched: false }); await persistQ(q); renderQueue(); });
+      return;
+    }
+    if (q.askDupe) {
+      card.className = 'card flagged';
+      card.innerHTML = `<div class="card-head">${thumb}<div class="meta"><div class="title">${esc(q.description)} · ${fmtAmt(q.amount)} L.E. on ${esc(isoToNice(q.date))}</div><div class="subtle">Same store and amount as a receipt already saved on ${esc(isoToNice(q.askDupe.date))}. Is this a second receipt, or the same one?</div></div></div><div class="actions"><button class="btn" type="button" id="${key}-same">Same one, remove</button><button class="btn primary" type="button" id="${key}-second">Second receipt, keep</button></div>`;
+      list.append(card);
+      const th = card.querySelector('.thumb'); if (th) th.addEventListener('click', () => showPhoto(q.url));
+      $(`${key}-same`).addEventListener('click', () => dropQ(q));
+      $(`${key}-second`).addEventListener('click', async () => {
+        q.askDupe = null;
+        if (autoSaveOn() && q.confident && !(q.unclear && q.unclear.length)) { try { await saveItem(q, true); await dropQ(q); toast('Saved'); return; } catch (e) { /* review instead */ } }
+        await persistQ(q); renderQueue();
+      });
       return;
     }
     card.className = 'card' + (q.unclear && q.unclear.length ? ' flagged' : '');
-    card.innerHTML = `<div class="card-head">${q.url ? `<button class="thumb" type="button" style="background-image:url(${q.url})" aria-label="View photo"></button>` : ''}<div class="meta"><div class="title">${esc(q.description || 'Receipt')}</div><div class="subtle">${q.unclear && q.unclear.length ? 'Check: ' + esc(q.unclear.join(', ')) : (q.url ? 'Read clearly' : 'Typed in by hand')}</div></div></div>` + formHtml(q, key);
+    card.innerHTML = `<div class="card-head">${thumb}<div class="meta"><div class="title">${esc(q.description || 'Receipt')}</div><div class="subtle">${q.unclear && q.unclear.length ? 'Check: ' + esc(q.unclear.join(', ')) : (q.url ? 'Read clearly' : 'Typed in by hand')}</div></div></div>` + formHtml(q, key);
     list.append(card);
     const th = card.querySelector('.thumb'); if (th) th.addEventListener('click', () => showPhoto(q.url));
     wireForm(q, key);
-    $(`${key}-skip`).addEventListener('click', () => { queue = queue.filter(x => x !== q); renderQueue(); updateCounters(); });
+    $(`${key}-skip`).addEventListener('click', () => dropQ(q));
     $(`${key}-save`).addEventListener('click', async () => {
       const errs = readForm(q, key); if (errs.length) { toast('Fill in: ' + errs.join(', ')); return; }
       const btn = $(`${key}-save`); btn.disabled = true; btn.textContent = 'Saving…';
-      try { await saveItem(q, false); queue = queue.filter(x => x !== q); renderQueue(); updateCounters(); toast('Saved'); }
+      try { await saveItem(q, false); await dropQ(q); toast('Saved'); }
       catch (e) { btn.disabled = false; btn.textContent = 'Save'; toast('Could not save. Try again.', 3500); }
     });
   });
+  if (removed.length) {
+    const det = document.createElement('details'); det.className = 'card';
+    det.innerHTML = `<summary style="cursor:pointer;font-weight:600">${removed.length} duplicate${removed.length === 1 ? '' : 's'} removed (tap to see)</summary><div class="subtle" style="margin:6px 0 10px">Exact copies of a receipt already saved: same date, store and amount. Tap Keep if one really is a separate receipt.</div><div id="removedList"></div>`;
+    list.append(det);
+    const rl = det.querySelector('#removedList');
+    removed.forEach(q => {
+      const key = 'r' + q.id; const rowEl = document.createElement('div'); rowEl.className = 'row';
+      rowEl.innerHTML = `<div class="r1">${esc(q.description)} · ${esc(isoToNice(q.date))}</div><div class="amt">${fmtAmt(q.amount)}</div><div class="r2"><button class="btn small" type="button" id="${key}-keep">Keep as a separate receipt</button><button class="btn small" type="button" id="${key}-gone">Delete</button></div>`;
+      rl.append(rowEl);
+      $(`${key}-keep`).addEventListener('click', async () => { q.removedDupe = null; await persistQ(q); renderQueue(); });
+      $(`${key}-gone`).addEventListener('click', () => dropQ(q));
+    });
+  }
 }
 
 // ====================== Saved list ======================
@@ -737,8 +813,8 @@ $('btnClearExported').addEventListener('click', async (e) => {
 document.addEventListener('visibilitychange', () => { if (document.hidden && camRunning) stopCamera(); });
 
 (async () => {
-  try { idb = await openDb(); await loadRows(); } catch (e) { toast('Storage is not available in this browser. Receipts will not be kept.', 5000); }
-  renderRows(); updateCounters();
+  try { idb = await openDb(); await loadRows(); await restoreQueue(); } catch (e) { toast('Storage is not available in this browser. Receipts will not be kept.', 5000); }
+  renderRows(); renderQueue(); updateCounters();
   if (!apiKey()) { $('camOff').hidden = false; $('camOffMsg').textContent = 'First time: add your Anthropic API key in Settings, then come back and tap Start.'; }
   else { $('camOff').hidden = false; }
 })();
